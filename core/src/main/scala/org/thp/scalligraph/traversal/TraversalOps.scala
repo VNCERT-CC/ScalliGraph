@@ -145,6 +145,18 @@ object TraversalOps extends TraversalPrinter {
     def getOrFail(entityName: String): Try[D] = orFail(NotFoundError(s"$entityName not found"))
 
     def orFail(ex: Exception): Try[D] = headOption.fold[Try[D]](Failure(ex))(Success.apply)
+    
+    def lastOption: Option[D] = {
+      debug("lastOption")
+      val ite = _toIterator
+      if (ite.hasNext) {        
+        var last = ite.next()
+        while (ite.hasNext) last = ite.next()
+        Some(last)
+      } else None
+    }
+    
+    def lastOrFail(entityName: String): Try[D] = lastOption.fold[Try[D]](Failure(NotFoundError(s"$entityName not found")))(Success.apply)
 
     def exists: Boolean = {
       debug("exists")
