@@ -13,6 +13,70 @@ import play.api.Logger
 
 import scala.reflect.runtime.{universe => ru}
 
+import java.util.function.BiPredicate
+import java.util.regex.{Pattern, Matcher}
+import java.io.Serializable
+
+class RegexPredicate(expression: String, val __negate: Boolean = false) 
+  extends BiPredicate[String, String] with Serializable {
+
+  private val _negate: Boolean = __negate
+  private val pattern: Pattern = Pattern.compile(expression)
+
+  def isNegate: Boolean = _negate
+
+  def getPattern: String = pattern.pattern()
+
+  override def test(value: String, expression: String): Boolean = {
+    val matcher: Matcher = pattern.matcher(value)
+    _negate != matcher.find()
+  }
+
+  override def negate(): BiPredicate[String, String] = 
+    new RegexPredicate(pattern.pattern(), !_negate)
+
+  override def equals(obj: Any): Boolean = obj match {
+    case that: RegexPredicate => this._negate == that._negate && this.pattern.pattern() == that.pattern.pattern()
+    case _ => false
+  }
+
+  override def hashCode(): Int = (pattern.pattern(), _negate).##
+
+  override def toString: String = s"regex(${pattern.pattern()})"
+
+  def getPredicateName: String = if (isNegate) "notRegex" else "regex"
+}
+
+class IncludesPredicate(_pattern: String, val __negate: Boolean = false) 
+  extends BiPredicate[String, String] with Serializable {
+
+  private val _negate: Boolean = __negate
+  private val pattern: String = _pattern
+
+  def isNegate: Boolean = _negate
+
+  def getPattern: String = pattern
+
+  override def test(value: String, expression: String): Boolean = {
+    _negate != value.contains(pattern)
+  }
+
+  override def negate(): BiPredicate[String, String] = 
+    new IncludesPredicate(pattern, !_negate)
+
+  override def equals(obj: Any): Boolean = obj match {
+    case that: IncludesPredicate => this._negate == that._negate && this.pattern == that.pattern
+    case _ => false
+  }
+
+  override def hashCode(): Int = (pattern, _negate).##
+
+  override def toString: String = s"includes(${pattern})"
+
+  def getPredicateName: String = if (isNegate) "notIncludes" else "includes"
+}
+
+
 case class PredicateFilter(fieldName: String, predicate: P[_]) extends InputQuery[Traversal.Unk, Traversal.Unk] {
   override def apply(
       publicProperties: PublicProperties,
@@ -101,6 +165,10 @@ class IdFilter(id: EntityId) extends InputQuery[Traversal.Unk, Traversal.Unk] {
 }
 
 object InputFilter {
+
+  def regexP(value: String): TextP = new TextP(new RegexPredicate(value, false), value)
+  def includesP(value: String): TextP = new TextP(new IncludesPredicate(value, false), value)
+
   lazy val logger: Logger                                                    = Logger(getClass)
   def is(field: String, value: Any): PredicateFilter                         = PredicateFilter(field, P.eq(value))
   def neq(field: String, value: Any): PredicateFilter                        = PredicateFilter(field, P.neq(value))
@@ -114,6 +182,8 @@ object InputFilter {
   def in(field: String, values: Any*): PredicateFilter                       = PredicateFilter(field, P.within(values: _*))
   def startsWith(field: String, value: String): PredicateFilter              = PredicateFilter(field, TextP.startingWith(value))
   def endsWith(field: String, value: String): PredicateFilter                = PredicateFilter(field, TextP.endingWith(value))
+  def regex(field: String, value: String): PredicateFilter                   = PredicateFilter(field, regexP(value))
+  def includes(field: String, value: String): PredicateFilter                = PredicateFilter(field, includesP(value))
   def or(filters: Seq[InputQuery[Traversal.Unk, Traversal.Unk]]): OrFilter   = OrFilter(filters)
   def and(filters: Seq[InputQuery[Traversal.Unk, Traversal.Unk]]): AndFilter = AndFilter(filters)
   def not(filter: InputQuery[Traversal.Unk, Traversal.Unk]): NotFilter       = NotFilter(filter)
@@ -162,6 +232,11 @@ object InputFilter {
       case (_, FObjOne("_ne", FDeprecatedObjOne(key, field)))                  => propParser(key)(field).map(value => neq(key, value))
       case (_, FObjOne("_is", FFieldValue(key, field)))                        => propParser(key)(field).map(value => is(key, value))
       case (_, FObjOne("_is", FDeprecatedObjOne(key, field)))                  => propParser(key)(field).map(value => is(key, value))
+      case (_, FObjOne("_regex", FFieldValue(key, FString(value))))            => Good(regex(key, value))
+      case (_, FObjOne("_regex", FDeprecatedObjOne(key, FString(value))))      => Good(regex(key, value))
+      case (_, FObjOne("_startsWith", FFieldValue(key, FString(value))))       => Good(startsWith(key, value))
+      case (_, FObjOne("_includes", FFieldValue(key, FString(value))))         => Good(includes(key, value))
+      case (_, FObjOne("_includes", FDeprecatedObjOne(key, FString(value))))   => Good(includes(key, value))
       case (_, FObjOne("_startsWith", FFieldValue(key, FString(value))))       => Good(startsWith(key, value))
       case (_, FObjOne("_startsWith", FDeprecatedObjOne(key, FString(value)))) => Good(startsWith(key, value))
       case (_, FObjOne("_endsWith", FFieldValue(key, FString(value))))         => Good(endsWith(key, value))
@@ -184,6 +259,7 @@ object InputFilter {
           valueParser = propParser(key)
           values <- s.values.validatedBy(valueParser.apply)
         } yield in(key, values: _*)
+
       case (_, FObjOne("_contains", FString(path)))                            => Good(isDefined(path))
       case (_, FObjOne("_like", FFieldValue(key, FString(value))))             => Good(like(key, value))
       case (_, FObjOne("_like", FDeprecatedObjOne(key, FString(value))))       => Good(like(key, value))
